@@ -1,13 +1,10 @@
 import expect from 'expect';
-import Chance from 'chance';
 import monk from 'monk';
 
 import { BulkUpdate } from '../src/bulkUpdate';
 
-import { dropAndSeedCollection } from './seed';
+import { dropUserCollection, reseedUserCollection } from './seed';
 import { expectAsyncError } from './utils';
-
-const chance = new Chance();
 
 const { MONGO_URL } = process.env;
 
@@ -25,26 +22,14 @@ function buildBulkUpdate(options) {
   return new BulkUpdate(bulkOptions);
 }
 
-function reseedUserCollection(options = {}) {
-  return dropAndSeedCollection({
-    collection: 'users',
-    count: 100,
-    dbUrl: MONGO_URL,
-    seed: () => ({
-      age: chance.age({ type: 'all' }),
-      gender: chance.gender(),
-      name: chance.name(),
-    }),
-    ...options,
-  });
-}
-
 describe('BulkUpdate', () => {
-  before(() => reseedUserCollection());
+  before(reseedUserCollection);
 
   beforeEach(() => {
     expect.restoreSpies();
   });
+
+  after(dropUserCollection);
 
   describe('Instantiation options', () => {
     describe('update', () => {
@@ -196,7 +181,7 @@ describe('BulkUpdate', () => {
   });
 
   describe('execute', () => { // maybe make integration (?) tests
-    beforeEach(() => reseedUserCollection({ count: 20000 }));
+    beforeEach(reseedUserCollection);
 
     describe('updateOne', () => {
       it('updates all matching documents via the "update" function if no "filter" query is supplied', async () => {
@@ -264,7 +249,7 @@ describe('BulkUpdate', () => {
         });
       });
 
-      it('returns a bulk response if no matching documents were found', async () => {
+      it.only('returns a bulk response if no matching documents were found', async () => {
         const genericDetails = {
           type: 'senior',
         };
@@ -280,6 +265,7 @@ describe('BulkUpdate', () => {
         });
 
         const bulkRes = await bulkUpdate.execute();
+
         expect(bulkRes.nModified).toEqual(0);
       });
     });

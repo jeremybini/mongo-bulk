@@ -51,7 +51,7 @@ export class BulkUpdate extends BulkWrite {
       // Return a blank update operation, in order to return a consistent BulkWriteResult
       return [{
         updateOne: {
-          filter: {},
+          filter,
           update: {
             $set: {},
           },

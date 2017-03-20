@@ -1,40 +1,21 @@
 import expect from 'expect';
 import { Collection, MongoClient } from 'mongodb';
 import monk, { Collection as MonkCollection } from 'monk';
-import Chance from 'chance';
 
 import bulkWrite, { BulkWrite } from '../src/bulkWrite';
 
-import { dropAndSeedCollection, dropCollection } from './seed';
+import { dropUserCollection, reseedUserCollection } from './seed';
 import { expectAsyncError } from './utils';
 
-const chance = new Chance();
 const { MONGO_URL } = process.env;
 const userCollection = monk(MONGO_URL).get('users');
 
-function reseedUserCollection(options = {}) {
-  return dropAndSeedCollection({
-    collection: 'users',
-    count: 100,
-    dbUrl: MONGO_URL,
-    seed: () => ({
-      age: chance.age({ type: 'all' }),
-      gender: chance.gender(),
-      name: chance.name(),
-    }),
-    ...options,
-  });
-}
-
-describe('BulkUpdate', () => {
-  before(() => dropCollection({
-    collection: 'users',
-    dbUrl: MONGO_URL
-  }));
-
+describe('BulkWrite', () => {
   beforeEach(() => {
     expect.restoreSpies();
   });
+
+  after(dropUserCollection);
 
   describe('Instantiation options', () => {
     describe('collection', () => {
@@ -150,7 +131,7 @@ describe('BulkUpdate', () => {
     async function expectTestOperationsWereRun(bulkResponse) {
       const { deletedCount, insertedCount, matchedCount, modifiedCount } = bulkResponse;
 
-      expect(deletedCount).toEqual(100);
+      expect(deletedCount).toEqual(2000);
       expect(insertedCount).toEqual(1);
       expect(matchedCount).toEqual(1);
       expect(modifiedCount).toEqual(1);
