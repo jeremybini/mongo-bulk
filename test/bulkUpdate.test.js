@@ -249,7 +249,7 @@ describe('BulkUpdate', () => {
         });
       });
 
-      it.only('returns a bulk response if no matching documents were found', async () => {
+      it('returns a bulk response if no matching documents were found', async () => {
         const genericDetails = {
           type: 'senior',
         };
