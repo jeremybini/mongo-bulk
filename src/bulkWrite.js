@@ -1,90 +1,259 @@
 import Promise from 'bluebird';
-import { Collection, Db } from 'mongodb';
-import monk from 'monk';
+import { isFunction, isNil, isPlainObject, isString } from 'lodash';
+import { MongoClient } from 'mongodb';
 
-/*
- *  TODO:
- *    1) concurrency,
- *    2) tests,
- *    3) proper comment formatting,
- *    4) backwards compatability,
- *    5) streams,
- */
+import BulkResults from './BulkResults';
+
+const SUPPORTED_TYPES = [
+  'delete', 'insert', 'replace', 'update',
+];
+
+const TYPE_FIELD_DICTIONARY = {
+  insert: 'document',
+  replace: 'replacement',
+  update: 'update',
+};
+
+const UPSERT_METHODS = [
+  'replace',
+  'update',
+];
 
 export class BulkWrite {
-  constructor({
-    collection, // string or instance of mongodb collection, allow monk instance?
-    concurrency = 1000, // TODO: add support for concurrency
-    db, // url string or instance of mongodb db
-    dbOptions, // mongodb connection options
-    filter = {}, // which documents to update
-    idField = '_id', // if mapping, what field to match on
-    operations, // pre built set of operations, if you want to do that for some reason
-    options = {}, // any options to pass to bulk update
-    ...additionalOptions,
-  }) {
-    if (!collection) {
-      throw new Error('Missing required option: "collection"');
-    }
-
-    let connectedCollection;
-
-    // TODO: need to check instanceof? or just if object? (support other mongo libs)
-    if (typeof collection === 'string') {
-      if (!db) {
-        throw new Error('Missing option: "db"');
-      }
-
-      if (db instanceof Db) {
-        connectedCollection = db.collection(collection);
-      } else if (typeof db === 'string') {
-        connectedCollection = monk(db, dbOptions).get(collection);
-      } else {
-        throw new Error('Invalid option format: "db"');
-      }
-    } else if (collection instanceof Collection) {
-      connectedCollection = collection;
-    } else {
-      throw new Error('Invalid option format: "collection"');
-    }
-
-    if (operations && !Array.isArray(operations) && typeof operations !== 'function') {
-      throw new Error('Invalid option format: "operations"');
-    }
-
+  constructor(options) {
     Object.assign(this, {
-      collection: connectedCollection,
-      concurrency,
-      filter,
-      idField,
-      operations,
+      ...options,
+      count: isNil(options.count) ? 1 : options.count,
+      concurrency: options.concurrency || 1000,
+      filter: options.filter || {},
+      idField: options.idField || '_id',
       options: {
-        ordered: true, // Add test for this
-        ...options,
+        ordered: true, // Add test for this?
+        ...options.options,
       },
-      ...additionalOptions,
+      results: [],
+      queue: [],
     });
+
+    this.ensureValidOptions();
   }
 
-  buildOperations() { // should this just be operations(), and allow being overwritten?
-    throw new Error(`Must add buildOperations method to ${this.constructor.name}`);
+  buildOperation({ document, filter, many = false }) {
+    const { type } = this;
+
+    const documentField = TYPE_FIELD_DICTIONARY[type];
+    const operationType = many ? `${type}Many` : `${type}One`;
+
+    const operation = {
+      [operationType]: {
+        filter,
+        [documentField]: { ...document },
+      },
+    };
+
+    if (UPSERT_METHODS.includes(type)) {
+      operation[operationType].upsert = this.upsert;
+      return operation;
+    }
+
+    return operation;
+  }
+
+  async bulkWrite(operations) {
+    const collection = await this.getCollection();
+    const result = await collection.bulkWrite(operations, this.options);
+    return new BulkResults(result);
+  }
+
+  ensureValidOptions() {
+    const { collection, db, document, operations, type } = this;
+    const errors = [];
+
+    if (!collection) {
+      errors.push('missing option - "collection"');
+    } else if (isString(collection)) {
+      if (!db) {
+        errors.push('missing option - "db"');
+      } else if (!isString(db) && !isFunction(db.collection)) {
+        errors.push('invalid option format - "db"');
+      }
+    } else if (!isFunction(collection.bulkWrite)) {
+      errors.push('invalid option format - "collection"');
+    }
+
+    if (operations) {
+      if (!Array.isArray(operations)) {
+        errors.push('invalid option format - "operations"');
+      }
+    } else if (!type) {
+      errors.push('missing options - must supply either "operations" or "type"');
+    } else if (!SUPPORTED_TYPES.includes(type)) {
+      errors.push('invalid option value - "type"');
+    } else if (type !== 'delete') {
+      if (!document) {
+        errors.push('missing option - "document"');
+      } else if (!isFunction(document) && !isPlainObject(document)) {
+        errors.push('invalid option value - "document"');
+      }
+    }
+
+    if (errors.length) {
+      throw new Error(`Unable to perform bulk operation:\n${errors.join('\n')}`);
+    }
   }
 
   async execute() {
-    let operations;
+    const { document, filter, operations } = this;
 
-    if (typeof this.operations === 'function') {
-      operations = await Promise.try(() => this.operations());
-    } else if (Array.isArray(this.operations)) {
-      operations = this.operations;
-    } else {
-      operations = await this.buildOperations();
+    if (operations) {
+      return this.bulkWrite(operations);
+    } else if (this.shouldExecuteInChunks()) {
+      return this.executeInChunks();
     }
 
-    return this.collection.bulkWrite(operations, this.options);
+    // We only call a single "${type}Many" operation if a POJO document was supplied,
+    // and we are not inserting
+    const operation = this.buildOperation({
+      document,
+      filter,
+      many: true,
+    });
+
+    return this.bulkWrite([operation]);
+  }
+
+  async executeInChunks() {
+    const cursor = await this.getCursor();
+
+    await this.processCursor(cursor);
+
+    return new BulkResults(this.results);
+  }
+
+  async getCollection() {
+    const { collection } = this;
+
+    if (isString(collection)) {
+      const db = await this.getDb();
+      return db.collection(collection);
+    }
+
+    return collection;
+  }
+
+  async getCursor() {
+    const { count, type } = this;
+
+    if (type === 'insert') {
+      let index = 0;
+
+      // Mock out a mongo cursor for insert operations
+      return {
+        async next() {
+          if (count === 0 || index >= count) {
+            return null;
+          }
+
+          const currentIndex = index;
+          index += 1;
+
+          return currentIndex;
+        },
+      };
+    }
+
+    const collection = await this.getCollection();
+    return collection.find(this.filter);
+  }
+
+  async getDb() {
+    const { db, dbOptions, dbResolver } = this;
+
+    // Only call connect once
+    if (!dbResolver) {
+      this.dbResolver = new Promise(async (resolve, reject) => {
+        try {
+          // Call connect if a db url was supplied
+          if (isString(db)) {
+            const connectedDb = await MongoClient.connect(db, dbOptions);
+            resolve(connectedDb);
+          }
+
+          // Otherwise, a resolve the supplied db connection
+          resolve(db);
+        } catch (err) {
+          reject(err);
+        }
+      });
+    }
+
+    return this.dbResolver;
+  }
+
+  // TODO: Test large data sets and long-running "document" functions
+  // Determine if cursor stream support to pause/resume stream while processing queue is needed
+  async processCursor(cursor) {
+    const { concurrency, queue } = this;
+
+    const doc = await cursor.next();
+
+    if (doc === null) {
+      // Process any remaining docs in queue
+      return this.processQueue();
+    }
+
+    queue.push(doc);
+
+    if (queue.length === concurrency) {
+      await this.processQueue();
+      this.queue = [];
+    }
+
+    return this.processCursor(cursor);
+  }
+
+  async processQueue() {
+    const { document, idField, results, queue } = this;
+
+    // Return so we don't pass empty operations to bulkWrite
+    if (!queue.length) {
+      return results;
+    }
+
+    const docMapper = isFunction(document) ? document : () => document;
+
+    const operations = await Promise.map(queue, async (item) => {
+      // Build the bulk document based on the supplied "document" function
+      const doc = await Promise.try(() => docMapper(item));
+      const documentFilter = { [idField]: item[idField] };
+
+      // TODO: Validate document
+      // Check if object, require $set, etc for 'updates', throw error 'did you mean "replace"' ???
+      if (!isPlainObject(doc)) {
+        throw new Error('"document" function must return a value');
+      }
+
+      // Create a `${type}One` operation for each record
+      return this.buildOperation({
+        document: doc,
+        filter: documentFilter,
+      });
+    });
+
+    const bulkResult = await this.bulkWrite(operations);
+
+    results.push(bulkResult);
+
+    return results;
+  }
+
+  shouldExecuteInChunks() {
+    const { document, type } = this;
+
+    return isFunction(document) || type === 'insert';
   }
 }
 
-export default function bulkWrite(options) {
+export default async function bulkWrite(options) {
   return new BulkWrite(options).execute();
 }

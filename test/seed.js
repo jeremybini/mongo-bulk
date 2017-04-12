@@ -25,16 +25,21 @@ export function dropUserCollection() {
   return dropCollection({ collection: 'users', dbUrl: MONGO_URL });
 }
 
+export function buildUser(options) {
+  return {
+    age: chance.age({ type: 'all' }),
+    gender: chance.gender(),
+    name: chance.name(),
+    ...options,
+  };
+}
+
 export function reseedUserCollection(options = {}) {
   return dropAndSeedCollection({
     collection: 'users',
-    count: 2000,
+    count: 5000,
     dbUrl: MONGO_URL,
-    seed: () => ({
-      age: chance.age({ type: 'all' }),
-      gender: chance.gender(),
-      name: chance.name(),
-    }),
+    seed: buildUser,
     ...options,
   });
 }
