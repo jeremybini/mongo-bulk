@@ -2,7 +2,7 @@
   "name": "mongo_bulk",
   "version": "0.0.1",
   "description": "Wrapper around mongodb's bulkWrite for more intuitive bulk operations",
-  "main": "index.js",
+  "main": "dist/index.js",
   "author": "Jeremy Bini",
   "license": "MIT",
   "keywords": [
@@ -17,7 +17,7 @@
   },
   "scripts": {
     "build": "babel src -d dist",
-    "clean": "rimraf dist",
+    "clean": "rm -rf dist",
     "cover": "NODE_ENV=test nyc mocha --opts mocha.opts",
     "coveralls": "npm run cover -- --report lcovonly && cat ./coverage/lcov.info | coveralls",
     "lint": "eslint src tests",
