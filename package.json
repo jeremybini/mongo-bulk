@@ -1,10 +1,14 @@
 {
-  "name": "mongo_bulk",
-  "version": "0.0.1",
-  "description": "Wrapper around mongodb's bulkWrite for more intuitive bulk operations",
+  "name": "mongo-bulk",
+  "version": "1.0.0",
+  "description": "Lightweight wrapper around mongodb's bulkWrite for more intuitive bulk operations",
   "main": "dist/index.js",
   "author": "Jeremy Bini",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:jeremybini/mongo-bulk.git"
+  },
   "keywords": [
     "mongo",
     "mongodb",
@@ -13,7 +17,7 @@
     "updateMany"
   ],
   "engines": {
-    "node": ">= 6.0.0"
+    "node": ">= 4.0.0"
   },
   "scripts": {
     "build": "babel src -d dist",
@@ -52,5 +56,6 @@
     "mocha-lcov-reporter": "^1.3.0",
     "monk": "^4.0.0",
     "nyc": "^10.1.2"
-  }
+  },
+  "homepage": "https://github.com/jeremybini/mongo-bulk"
 }

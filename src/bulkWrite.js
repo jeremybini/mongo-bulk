@@ -51,7 +51,7 @@ export class BulkWrite {
       },
     };
 
-    if (UPSERT_METHODS.includes(type)) {
+    if (UPSERT_METHODS.indexOf(type) > -1) {
       operation[operationType].upsert = this.upsert;
       return operation;
     }
@@ -87,7 +87,7 @@ export class BulkWrite {
       }
     } else if (!type) {
       errors.push('missing options - must supply either "operations" or "type"');
-    } else if (!SUPPORTED_TYPES.includes(type)) {
+    } else if (SUPPORTED_TYPES.indexOf(type) === -1) {
       errors.push('invalid option value - "type"');
     } else if (type !== 'delete') {
       if (!document) {
