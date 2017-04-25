@@ -28,7 +28,7 @@ export class BulkWrite {
       filter: options.filter || {},
       idField: options.idField || '_id',
       options: {
-        ordered: true, // Add test for this?
+        ordered: true,
         ...options.options,
       },
       results: [],
@@ -39,7 +39,7 @@ export class BulkWrite {
   }
 
   buildOperation({ document, filter, many = false }) {
-    const { type } = this;
+    const { type, upsert } = this;
 
     const documentField = TYPE_FIELD_DICTIONARY[type];
     const operationType = many ? `${type}Many` : `${type}One`;
@@ -52,8 +52,7 @@ export class BulkWrite {
     };
 
     if (UPSERT_METHODS.indexOf(type) > -1) {
-      operation[operationType].upsert = this.upsert;
-      return operation;
+      operation[operationType].upsert = upsert;
     }
 
     return operation;
@@ -61,7 +60,9 @@ export class BulkWrite {
 
   async bulkWrite(operations) {
     const collection = await this.getCollection();
+
     const result = await collection.bulkWrite(operations, this.options);
+
     return new BulkResults(result);
   }
 
@@ -69,6 +70,7 @@ export class BulkWrite {
     const { collection, db, document, operations, type } = this;
     const errors = [];
 
+    // collection, db
     if (!collection) {
       errors.push('missing option - "collection"');
     } else if (isString(collection)) {
@@ -81,6 +83,7 @@ export class BulkWrite {
       errors.push('invalid option format - "collection"');
     }
 
+    // operations, type, document
     if (operations) {
       if (!Array.isArray(operations)) {
         errors.push('invalid option format - "operations"');
@@ -111,8 +114,8 @@ export class BulkWrite {
       return this.executeInChunks();
     }
 
-    // We only call a single "${type}Many" operation if a POJO document was supplied,
-    // and we are not inserting
+    // We only call a single "${type}Many" operation if a POJO document
+    // was supplied and we are not inserting
     const operation = this.buildOperation({
       document,
       filter,
@@ -150,7 +153,7 @@ export class BulkWrite {
       // Mock out a mongo cursor for insert operations
       return {
         async next() {
-          if (count === 0 || index >= count) {
+          if (index >= count) {
             return null;
           }
 
@@ -163,15 +166,16 @@ export class BulkWrite {
     }
 
     const collection = await this.getCollection();
+
     return collection.find(this.filter);
   }
 
   async getDb() {
-    const { db, dbOptions, dbResolver } = this;
+    const { db, dbOptions, _dbResolver } = this;
 
-    // Only call connect once
-    if (!dbResolver) {
-      this.dbResolver = new Promise(async (resolve, reject) => {
+    // Only call db.connect once
+    if (!_dbResolver) {
+      this._dbResolver = new Promise(async (resolve, reject) => {
         try {
           // Call connect if a db url was supplied
           if (isString(db)) {
@@ -187,11 +191,15 @@ export class BulkWrite {
       });
     }
 
-    return this.dbResolver;
+    return this._dbResolver;
   }
 
-  // TODO: Test large data sets and long-running "document" functions
-  // Determine if cursor stream support to pause/resume stream while processing queue is needed
+  /**
+   *  TODO:
+   *   - Test large data sets and long-running "document" functions
+   *   - Determine if cursor stream support to pause/resume stream
+   *     while processing queue is needed
+  **/
   async processCursor(cursor) {
     const { concurrency, queue } = this;
 
@@ -227,8 +235,12 @@ export class BulkWrite {
       const doc = await Promise.try(() => docMapper(item));
       const documentFilter = { [idField]: item[idField] };
 
-      // TODO: Validate document
-      // Check if object, require $set, etc for 'updates', throw error 'did you mean "replace"' ???
+      /**
+       *  TODO:
+       *    - Validate returned doc
+       *    - Require $set, $unset, $addToSet, etc for 'update' operations,
+       *    - Throw error -> 'Did you mean "replace"'
+      **/
       if (!isPlainObject(doc)) {
         throw new Error('"document" function must return a value');
       }
